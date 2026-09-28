@@ -1,0 +1,25 @@
+# ── Secrets ───────────────────────────────────────────────────────────────
+# The single most important line in this file. .env holds GROQ_API_KEY.
+.env
+
+# ── Virtual environment ───────────────────────────────────────────────────
+.venv/
+venv/
+
+# ── Generated at runtime, never committed ─────────────────────────────────
+# Persistent vector DB — rebuildable from the source documents.
+chroma_store/
+# Local token ledger (§9.6 guardrail 2).
+data/usage.jsonl
+
+# ── Python bytecode ───────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ── Editors / OS ──────────────────────────────────────────────────────────
+.idea/
+.vscode/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db

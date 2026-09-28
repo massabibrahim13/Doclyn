@@ -1,0 +1,24 @@
+# Doclyn dependencies (§4.3)
+# Unpinned for v1 — pin exact versions at Stage 6 before deploying.
+
+# --- API layer ---
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart        # FastAPI needs this for multipart/form-data uploads
+
+# --- LLM provider ---
+openai                  # a CLIENT library, not a paid service.
+                        # Pointed at Groq's base_url. No OpenAI account involved.
+
+# --- RAG ---
+chromadb                # embedded vector DB, no server process
+sentence-transformers   # local CPU embeddings — this is why ingestion is free
+pypdf                   # pure-Python PDF text extraction, exposes page numbers
+
+# --- Frontend ---
+streamlit
+httpx                   # Streamlit -> FastAPI HTTP calls
+
+# --- Config ---
+python-dotenv           # loads .env into environment variables
