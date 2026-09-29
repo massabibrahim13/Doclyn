@@ -17,8 +17,21 @@ import time
 import httpx
 import streamlit as st
 
-API = os.getenv("DOCLYN_API", "http://localhost:8000")
+def _api_url() -> str:
+    """Streamlit Community Cloud supplies secrets via st.secrets; everywhere
+    else it is an environment variable. Try both, fall back to localhost."""
+    try:
+        return st.secrets["DOCLYN_API"]
+    except Exception:
+        return os.getenv("DOCLYN_API", "http://localhost:8000")
+
+
+API = _api_url()
 TIMEOUT = 120.0
+# Render's free tier spins the service down after 15 minutes idle, and a cold
+# start takes the better part of a minute. A 10s health timeout would report a
+# perfectly healthy backend as dead.
+HEALTH_TIMEOUT = 30.0
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 st.set_page_config(page_title="Doclyn", page_icon="📄", layout="wide")
@@ -45,7 +58,7 @@ st.markdown("""
 
 def api_get(path: str):
     try:
-        r = httpx.get(f"{API}{path}", timeout=10.0)
+        r = httpx.get(f"{API}{path}", timeout=HEALTH_TIMEOUT)
         return r.json() if r.status_code == 200 else None
     except httpx.HTTPError:
         return None
@@ -107,8 +120,12 @@ if online and health["stub_mode"]:
 # State 5 — backend unreachable. A dead backend must be obvious, not a chat box
 # that silently swallows input.
 if not online:
-    st.error(f"Backend not responding at {API}. Start it with "
-             "`uvicorn backend.main:app --reload`.", icon="🔌")
+    if "localhost" in API or "127.0.0.1" in API:
+        st.error("Backend not responding. Start it with "
+                 "`uvicorn backend.main:app --reload`.", icon="🔌")
+    else:
+        st.error("Backend not responding. On a free tier it sleeps after 15 "
+                 "minutes idle — give it a minute and refresh.", icon="😴")
 
 
 # ── Sidebar (§7.2) ───────────────────────────────────────────────────────────
@@ -224,21 +241,32 @@ question = st.chat_input(placeholder, disabled=blocked)
 def ask(question: str, retried: bool = False) -> None:
     """Send one question and render the streamed reply."""
     selected = [d for d, on in st.session_state.selected.items() if on] or None
+
+    # messages[-1] is the question being asked right now. Including it here as
+    # well would send it twice: once as `message`, once as the last history turn.
     payload = {
         "message": question,
         "history": [{"role": m["role"], "content": m["content"]}
-                    for m in st.session_state.messages
-                    if m.get("grounded") is not False],
+                    for m in st.session_state.messages[:-1]],
         "document_ids": selected,
     }
 
     citations, grounded, parts, final = [], True, [], None
+    saw_event = False
 
     with st.chat_message("assistant"):
         slot = st.empty()
         cite_slot = st.container()
+        slot.markdown("_thinking…_")
 
-        for event, data in sse(payload):
+        try:
+            stream = sse(payload)
+        except httpx.HTTPError as exc:
+            slot.error(f"Could not reach the backend: {exc}", icon="🔌")
+            return
+
+        for event, data in stream:
+            saw_event = True
             if event == "citations":
                 citations = data.get("citations", [])
                 grounded = data.get("grounded", True)
@@ -283,9 +311,14 @@ def ask(question: str, retried: bool = False) -> None:
                     st.error(detail, icon="⚠️")
                 return
 
+    answer = final if final is not None else "".join(parts)
+    if not saw_event or not answer.strip():
+        st.warning("The backend returned nothing. Check the uvicorn terminal.", icon="⚠️")
+        return
+
     st.session_state.messages.append({
         "role": "assistant",
-        "content": final if final is not None else "".join(parts),
+        "content": answer,
         "citations": citations if grounded else [],
         "grounded": grounded,
     })

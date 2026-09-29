@@ -69,7 +69,8 @@ if chunks == 0:
     print("Index is empty. Run again with --reindex")
     sys.exit(1)
 
-print(f"Index: {docs} documents, {chunks} chunks   |   evaluating top_k={args.top_k}\n")
+print(f"Index: {docs} documents, {chunks} chunks   |   top_k={args.top_k}   "
+      f"|   embeddings={embeddings.backend_name()}\n")
 
 # ── Answerable questions: hit rate at k ──────────────────────────────────────
 hits = 0

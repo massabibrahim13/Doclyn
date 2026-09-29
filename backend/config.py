@@ -135,9 +135,13 @@ ALLOWED_EXTENSIONS = {".pdf", ".txt"}
 # Named origins, never "*". Embeddability means cross-origin calls are a real
 # use case, so this is a deliberate list rather than a wildcard.
 # 8501 is Streamlit's default port.
+# DOCLYN_CORS_ORIGINS is a comma-separated list, set on the deployed API to the
+# UI's public origin. Named origins, never "*".
 CORS_ORIGINS = [
-    "http://localhost:8501",
-    "http://127.0.0.1:8501",
+    o.strip() for o in os.getenv(
+        "DOCLYN_CORS_ORIGINS",
+        "http://localhost:8501,http://127.0.0.1:8501",
+    ).split(",") if o.strip()
 ]
 
 

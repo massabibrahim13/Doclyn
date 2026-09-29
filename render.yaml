@@ -1,0 +1,29 @@
+# Render blueprint for the Doclyn API.
+# The UI is deployed separately on Streamlit Community Cloud — see deploy/DEPLOY.md.
+services:
+  - type: web
+    name: doclyn-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # $PORT is assigned by Render; binding to 0.0.0.0 is required or the health
+    # check never passes.
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: GROQ_API_KEY
+        sync: false          # set in the dashboard; never committed
+      - key: DOCLYN_STUB
+        value: "0"
+      # No free tier gives chroma_store/ a real disk. Say so rather than
+      # losing uploads silently, and seed the sample corpus so the demo works.
+      - key: DOCLYN_PERSISTENCE
+        value: ephemeral
+      - key: DOCLYN_SEED_SAMPLE
+        value: "1"
+      - key: DOCLYN_RATE_LIMIT
+        value: "10"
+      - key: DOCLYN_CORS_ORIGINS
+        sync: false          # your Streamlit app's URL, set after that deploys

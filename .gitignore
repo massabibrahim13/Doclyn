@@ -11,6 +11,8 @@ venv/
 chroma_store/
 # Local token ledger (§9.6 guardrail 2).
 data/usage.jsonl
+# Streamlit secrets — same rule as .env.
+.streamlit/secrets.toml
 
 # ── Python bytecode ───────────────────────────────────────────────────────
 __pycache__/

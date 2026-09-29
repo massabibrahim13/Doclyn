@@ -8,7 +8,7 @@ Built to run entirely on free tiers: **no paid API, no credit card, no trial
 credits that expire into a bill.**
 
 ```
-FastAPI · ChromaDB · sentence-transformers (local) · Groq gpt-oss-120b · Streamlit
+FastAPI · ChromaDB · all-MiniLM-L6-v2 (local, ONNX) · Groq gpt-oss-120b · Streamlit
 ```
 
 ---
@@ -62,9 +62,9 @@ Where it does earn its place:
     └─────────────────────────┘      └───────────────────────┘
               ▲
     ┌─────────┴──────────────┐
-    │ sentence-transformers  │  all-MiniLM-L6-v2, local, CPU, 384-dim
-    │ (runs on your machine, │  ← why ingestion costs nothing
-    │  zero API calls)       │
+    │ all-MiniLM-L6-v2 (ONNX)│  local, CPU, 384-dim, no PyTorch
+    │ (runs on your machine, │  ← why ingestion costs nothing, and why
+    │  zero API calls)       │    the API fits in 512MB of RAM
     └────────────────────────┘
 ```
 
@@ -87,6 +87,13 @@ copy .env.example .env           # cp on macOS/Linux
 
 python scripts/check_env.py      # verifies interpreter, deps, key loading
 ```
+
+Embeddings default to the ONNX build of `all-MiniLM-L6-v2` that ships with
+ChromaDB — same model as `sentence-transformers`, no PyTorch, about a tenth of
+the memory. That is what lets the API run on a 512MB free tier. To use the
+PyTorch path instead: `pip install sentence-transformers` and set
+`DOCLYN_EMBEDDINGS=torch`. Re-index when switching, since the two produce
+near-identical but not bit-identical vectors.
 
 Run the two processes:
 
@@ -306,6 +313,19 @@ ones. Tested deliberately; the mitigation is a reduction in risk, not a guarante
 hold across replicas. Adequate for a single free-tier instance, not for anything
 larger.
 
+**Deployed uploads do not survive a restart.** No free tier offers a persistent
+disk. The sample corpus is re-indexed on every start so the demo always works,
+`/health` reports `persistence: "ephemeral"`, and the UI says so in the header.
+
+**The deployed API sleeps.** Render's free tier spins down after 15 minutes idle,
+so the first request after a quiet period takes the better part of a minute. The
+UI says it is waking rather than claiming the backend is dead.
+
+**The token ledger is ephemeral in deployment too.** `data/usage.jsonl` sits on
+the same disposable filesystem, so the daily budget guard forgets what was spent
+whenever the service restarts. On an ephemeral host the per-IP cap does the real
+work.
+
 **No auth, no multi-user isolation.** Everyone shares one document collection.
 This is a demo, not a product.
 
@@ -331,7 +351,7 @@ backend/
   main.py        FastAPI routes
   models.py      request/response schemas — validation comes free from these
   ingest.py      file → text → chunks → vectors, with SHA-256 dedup
-  embeddings.py  local sentence-transformers, zero API calls
+  embeddings.py  local ONNX embeddings, zero API calls
   store.py       ChromaDB wrapper
   retrieve.py    query → nearest chunks → similarity floor
   prompts.py     versioned system prompts + citation normalisation
@@ -342,7 +362,13 @@ frontend/app.py  Streamlit client — no business logic, never holds the API key
 scripts/         env check, chat CLI, token measurement, budget, evaluation
 data/sample/     demo corpus + eval set
 docs/SPEC.md     full technical specification, amended as stages completed
+deploy/DEPLOY.md step-by-step deployment (Render + Streamlit Community Cloud)
 ```
 
 The frontend never calls Groq directly. Every call routes through the backend so
 the key stays server-side — that is the main reason the API layer exists.
+
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).

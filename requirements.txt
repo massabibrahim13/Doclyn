@@ -12,8 +12,10 @@ openai                  # a CLIENT library, not a paid service.
                         # Pointed at Groq's base_url. No OpenAI account involved.
 
 # --- RAG ---
-chromadb                # embedded vector DB, no server process
-sentence-transformers   # local CPU embeddings — this is why ingestion is free
+chromadb                # embedded vector DB, AND the ONNX build of
+                        # all-MiniLM-L6-v2 used for local embeddings.
+                        # This is why ingestion is free AND why the service
+                        # fits in 512MB of RAM.
 pypdf                   # pure-Python PDF text extraction, exposes page numbers
 
 # --- Frontend ---
@@ -22,3 +24,8 @@ httpx                   # Streamlit -> FastAPI HTTP calls
 
 # --- Config ---
 python-dotenv           # loads .env into environment variables
+
+# --- Optional ---
+# Only needed for DOCLYN_EMBEDDINGS=torch. Same model, ~2.5GB of dependencies.
+# Left out of the default install so free-tier deploys stay within memory.
+# sentence-transformers
