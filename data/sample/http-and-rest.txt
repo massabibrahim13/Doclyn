@@ -1,0 +1,56 @@
+HTTP AND REST: A SHORT REFERENCE
+
+Requests
+
+An HTTP request has a method, a path, headers and an optional body. The method
+states the intent. GET retrieves a resource and should not change anything.
+POST creates a resource or submits data for processing. PUT replaces a resource
+entirely. PATCH modifies part of one. DELETE removes one.
+
+GET requests carry their parameters in the URL as a query string. POST, PUT and
+PATCH carry theirs in the request body, most commonly as JSON.
+
+Status codes
+
+Status codes are grouped by their first digit. Codes beginning with 2 indicate
+success, 3 indicate redirection, 4 indicate a fault in the request, and 5
+indicate a fault on the server.
+
+The codes that matter most in practice are these. 200 means the request
+succeeded. 201 means a resource was created. 204 means the request succeeded and
+there is deliberately no body to return, which is the correct response to a
+successful delete. 400 means the request was malformed. 401 means authentication
+is missing or invalid, while 403 means the caller was identified but is not
+permitted. 404 means the resource does not exist. 413 means the payload is too
+large. 422 means the request was well formed but semantically invalid. 429 means
+the caller has been rate limited. 500 means the server failed unexpectedly. 503
+means the server is temporarily unable to handle the request.
+
+The distinction between 401 and 403 is frequently confused. 401 is about who you
+are, 403 is about what you are allowed to do.
+
+Content types
+
+The Content-Type header states the format of the body. Ordinary JSON APIs use
+application/json. File uploads use multipart/form-data, which allows binary file
+content and text fields to be sent together in one request. Server-sent events
+use text/event-stream.
+
+Server-sent events
+
+Server-sent events are a way for a server to push a sequence of messages over a
+single long-lived HTTP response. Each message is sent as a block of text with an
+optional event name and a data field, separated from the next by a blank line.
+The connection stays open until the server closes it.
+
+This is simpler than a websocket because it is one-directional and rides on
+ordinary HTTP. It is the normal mechanism for streaming a language model's reply
+token by token, because it allows the first words to reach the reader while the
+rest is still being generated.
+
+Idempotency
+
+An operation is idempotent when performing it several times has the same effect
+as performing it once. GET, PUT and DELETE are expected to be idempotent. POST is
+not. This matters when a client retries after a timeout: retrying an idempotent
+request is safe, while retrying a POST may create a second resource.

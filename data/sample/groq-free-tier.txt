@@ -1,0 +1,67 @@
+GROQ FREE TIER: OPERATING NOTES FOR DOCLYN
+
+Scope
+
+These notes record the free-tier behaviour observed while building Doclyn against
+the openai/gpt-oss-120b model on Groq. Figures marked as measured were taken from
+a real API response on 29 September 2026.
+
+Published limits
+
+For openai/gpt-oss-120b the free tier permits 30 requests per minute and 1000
+requests per day. The token limits are 8000 tokens per minute and 200000 tokens
+per day. The model's context window is 131072 tokens and its maximum completion
+length is 65536 tokens.
+
+The token limits are the binding constraint, not the request limits. At roughly
+1200 tokens per query the daily token allowance runs out after about 160 queries,
+long before the 1000 request ceiling is approached.
+
+Rate limits apply per organisation rather than per API key. Creating additional
+keys does not raise them.
+
+Measured cost of one query
+
+A single query consisting of a system prompt, three retrieved passages of about
+1400 characters each, and a short question consumed 1109 input tokens. The answer
+consumed 104 completion tokens, of which 40 were reasoning tokens and 64 were the
+visible reply. Total cost was 1213 tokens.
+
+Reasoning tokens are counted inside the completion total and are also reported
+separately under completion_tokens_details.reasoning_tokens. At a reasoning
+effort setting of low, reasoning overhead is small.
+
+Two different accounting methods
+
+The daily token allowance is charged for tokens actually used. The per-minute
+allowance is charged differently: it reserves the full value of
+max_completion_tokens at the moment the request is made, regardless of how short
+the answer turns out to be.
+
+This was confirmed by observation. A request with 1109 input tokens and a
+max_completion_tokens value of 800 returned a remaining per-minute allowance of
+6091 tokens, which is exactly 8000 minus the sum of 1109 and 800. The answer
+itself used only 104 tokens.
+
+The practical consequence is that lowering max_completion_tokens does not reduce
+what is charged against the daily allowance, but it does directly increase how
+many queries can be made per minute.
+
+Response headers
+
+Every response carries rate limit information. The headers
+x-ratelimit-remaining-requests and x-ratelimit-remaining-tokens report what is
+left in the current window, and x-ratelimit-reset-tokens reports how long until
+the token window resets. A 429 response additionally carries retry-after.
+
+On a free tier a 429 is a normal runtime state rather than an exceptional error,
+and should be handled as such. Retrying once after the interval given by
+retry-after is sufficient for human-paced use. Retrying in a loop is how a daily
+quota gets consumed in seconds.
+
+Prompt caching
+
+Tokens served from cache do not count toward rate limits. This makes it worth
+keeping the system prompt byte-for-byte identical between requests, and placing
+anything that changes per request, such as retrieved passages, in the user turn
+instead.

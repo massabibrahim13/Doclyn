@@ -104,20 +104,41 @@ RETRY_AFTER_CAP_SECONDS = 30          # §9.6 guardrail 4: retry ONCE, never loo
 # ──────────────────────────────────────────────────────────────────────────────
 # RAG parameters (§8.1, §8.2)
 # ──────────────────────────────────────────────────────────────────────────────
+# Kept at 350 after measuring (Stage 3). At 500 the hit rate @3 was identical
+# (11/12) while each query carried ~450 more tokens of context. Rank improved at
+# 500, but rank inside the top-k is irrelevant: all k chunks go into the prompt
+# either way. Same accuracy, lower cost wins.
 CHUNK_SIZE = 350                      # tokens (~1400 chars)
 CHUNK_OVERLAP = 35                    # 10% — keeps boundary-split sentences whole
 TOP_K_DEFAULT = 3
 
-# Provisional. This number is GUESSED until Stage 3 tunes it against the eval set.
-# Below this cosine similarity on every retrieved chunk -> grounded: false, and the
-# LLM is never called (§6.5).
-SIM_FLOOR = 0.35
+# Tuned 2026-09-29 against the eval set (scripts/test_retrieval.py).
+# The guessed 0.35 was too high: it would have refused three legitimate questions
+# scoring 0.192, 0.260 and 0.285.
+#
+# Measured spread: real questions 0.19-0.64, noise questions 0.04-0.22.
+# They OVERLAP, so no floor is perfect. 0.25 blocks all three noise questions
+# and costs one false refusal out of twelve. That tradeoff is deliberate —
+# refusing a real question is a visible, honest failure; answering a noise
+# question confidently is not.
+SIM_FLOOR = 0.25
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Uploads (§6.2, §12)
 # ──────────────────────────────────────────────────────────────────────────────
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024   # 10 MB
 ALLOWED_EXTENSIONS = {".pdf", ".txt"}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CORS (§12)
+# ──────────────────────────────────────────────────────────────────────────────
+# Named origins, never "*". Embeddability means cross-origin calls are a real
+# use case, so this is a deliberate list rather than a wildcard.
+# 8501 is Streamlit's default port.
+CORS_ORIGINS = [
+    "http://localhost:8501",
+    "http://127.0.0.1:8501",
+]
 
 
 def missing_api_key() -> bool:

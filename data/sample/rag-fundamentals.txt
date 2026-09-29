@@ -1,0 +1,86 @@
+RETRIEVAL-AUGMENTED GENERATION: FUNDAMENTALS
+
+1. What the technique does
+
+Retrieval-augmented generation, usually shortened to RAG, is a way of answering
+questions about a body of text that the language model was never trained on. The
+documents are split into passages, each passage is converted into a numeric
+vector, and those vectors are stored. At question time the question is converted
+into a vector by the same method, the stored vectors nearest to it are found, and
+the corresponding passages are pasted into the prompt alongside the question. The
+model then answers from that pasted text rather than from memory.
+
+Nothing about the model changes. No weights are updated and no training occurs.
+RAG is prompt construction, not learning.
+
+2. Embeddings
+
+An embedding is a fixed-length list of numbers that represents a piece of text.
+The model that produces it has been trained so that texts with similar meanings
+produce vectors that sit close together in that space. The all-MiniLM-L6-v2 model
+produces vectors with 384 dimensions and runs comfortably on a CPU, which is why
+it is a common default for small projects.
+
+Closeness is normally measured with cosine similarity, which compares the angle
+between two vectors and ignores their length. It returns 1.0 for vectors pointing
+in exactly the same direction, 0.0 for vectors at right angles, and negative
+values for opposing directions. In practice, scores above roughly 0.5 indicate a
+strong topical match and scores below roughly 0.3 usually indicate no real
+relationship at all.
+
+3. Chunking and why the size matters
+
+Chunking is the process of splitting a source document into smaller passages
+before they are embedded. The size of each passage is a genuine tradeoff rather
+than a setting with a single correct value.
+
+A large chunk carries more surrounding context, so an answer drawn from it is
+less likely to be missing a qualifying clause that sat in a neighbouring
+sentence. But a large chunk also produces a single vector that has to represent
+many different ideas at once, and that vector drifts toward the average of those
+ideas rather than sitting near any one of them. Retrieval quality falls as a
+result, because a query about one specific idea no longer lands close to the
+passage containing it.
+
+A small chunk has the opposite profile. Its vector is sharp and specific, so
+retrieval precision improves, but the passage may be too narrow to answer the
+question once it reaches the model.
+
+A chunk size of around 350 tokens, which is roughly 1400 characters of English
+prose, is a reasonable starting point for question answering over documents.
+
+4. Overlap
+
+Overlap exists to soften the worst failure of fixed-size splitting, which is a
+sentence cut cleanly in half at a boundary so that neither resulting chunk
+contains a complete statement. An overlap of roughly 10 percent means any
+sentence near a boundary appears whole in at least one chunk. The cost of overlap
+is storage and a small amount of duplicated text in results, both of which are
+cheap compared with losing the sentence that held the answer.
+
+5. Measuring retrieval quality
+
+The metric normally used is hit rate at k: the percentage of test questions for
+which the correct passage appears somewhere in the top k results. It is computed
+by writing a set of questions by hand, recording which passage should answer
+each, running the retrieval step, and checking whether that passage was returned.
+
+Hit rate at k requires no language model at all, which means it costs nothing to
+run and can be repeated as often as needed. This is the single most useful thing
+to measure when tuning a RAG system, because answer quality is determined almost
+entirely by retrieval. If the wrong passage is fetched, no model and no prompt
+will produce a correct answer.
+
+6. Known limitations
+
+RAG does not eliminate incorrect answers. It reduces them by grounding the model
+in supplied text, but the retrieval step can still fetch the wrong passage, and a
+model can still misread a passage it was given. A similarity floor helps: if no
+retrieved passage scores above a threshold, the system can refuse to answer
+rather than guess.
+
+Instructions embedded inside an uploaded document are a separate hazard. Because
+the retrieved text is pasted into the prompt, a document containing a sentence
+such as "ignore all previous instructions" is competing with the system prompt
+for the model's attention. Delimiting the documents clearly and instructing the
+model to treat them as data reduces this risk but does not remove it.

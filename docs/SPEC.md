@@ -1,6 +1,6 @@
 # DOCLYN — TECHNICAL SPECIFICATION
 Version 1.1 · Last updated 2026-09-28
-Owner: Massab · Status: **Stage 0 complete — skeleton committed**
+Owner: Massab · Status: **Stage 1 complete — token accounting measured, §9.1 corrected**
 
 This document is the complete build reference. A fresh chat needs nothing else.
 
@@ -691,20 +691,40 @@ material** — it shows prompts were tested, not copied.
 
 ## 9. TOKEN BUDGET & FREE-TIER FEASIBILITY
 
-### 9.1 Per-query budget
-| Component | Tokens |
-|---|---|
-| System prompt | ~150 |
-| 3 chunks × 350 tokens | ~1,050 |
-| History (last 4 turns) | ~400 |
-| User question | ~30 |
-| **Input subtotal** | **~1,630** |
-| Output cap (`MAX_COMPLETION_TOKENS`) | 800 |
-| **Worst case per query** | **~2,430** |
+### 9.1 Per-query budget — **MEASURED 2026-09-29**, estimates superseded
 
-Output is capped at 800 rather than 600 because reasoning tokens share that budget and
-their exact accounting is undocumented (§4.1). Expect real usage nearer 400–600 with
-`reasoning_effort: "low"`. **Stage 1 measures this and this table gets corrected.**
+Run: `scripts/measure_tokens.py`, one query shaped like a real Stage 4 request
+(system prompt + 3 chunks of ~1,400 chars + question, no history).
+
+| Component | v1.1 estimate | **Measured** |
+|---|---|---|
+| Input (system + 3 chunks + question) | ~1,230 | **1,109** |
+| History (last 4 turns) | ~400 | not in this test; estimate stands |
+| **Input subtotal** | ~1,630 | **~1,509** |
+| Output — visible answer | — | **64** |
+| Output — reasoning (`effort: "low"`) | — | **40** |
+| **Output actual** | 400–600 expected | **104** |
+| **Real cost per query** | — | **~1,213** (1,613 with history) |
+| Output *cap* (`MAX_COMPLETION_TOKENS`) | 800 | **500** |
+| **Worst case per query** | ~2,430 | **~2,009** |
+
+**The estimates were pessimistic by roughly half.** Real cost is ~1,213 tokens, not
+~2,430, and reasoning overhead at `"low"` is 40 tokens — negligible, and reported
+separately rather than hidden.
+
+**Two different accountings, which matters:**
+- **TPD / the local ledger** counts **actual** tokens → 1,213 per query →
+  **~123 queries/day** against the 150,000 ceiling (vs. the 61 originally projected).
+- **TPM** counts **input + the full completion cap**, reserved up front (§4.1) →
+  1,109 + 500 = 1,609 → **~5 queries/minute** against Groq's 8,000.
+
+So `MAX_COMPLETION_TOKENS` was cut 800 → 500: it doesn't reduce what you're billed
+(you pay for tokens generated), it raises the per-minute ceiling. 500 still leaves
+~5× headroom over the measured 104.
+
+**Revised §9.3 outlook:** Stage 4's 40–60 calls ≈ 73,000 tokens — under half a day's
+budget, not the two-day risk originally feared. The binding constraint is the
+per-minute rate during rapid iteration, not the daily total.
 
 ### 9.2 What the limits yield
 - **8,000 TPM ÷ 2,430 ≈ 3 queries/minute**

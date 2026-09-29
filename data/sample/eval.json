@@ -1,0 +1,87 @@
+[
+  {
+    "question": "What overlap is recommended between chunks?",
+    "expect_chunk_contains": "overlap of roughly 10 percent",
+    "expect_page": 1,
+    "source": "rag-fundamentals.txt"
+  },
+  {
+    "question": "How many dimensions does the all-MiniLM-L6-v2 embedding model produce?",
+    "expect_chunk_contains": "384 dimensions",
+    "expect_page": 1,
+    "source": "rag-fundamentals.txt"
+  },
+  {
+    "question": "What does cosine similarity return for vectors at right angles?",
+    "expect_chunk_contains": "0.0 for vectors at right angles",
+    "expect_page": 1,
+    "source": "rag-fundamentals.txt"
+  },
+  {
+    "question": "Why does making chunks larger hurt retrieval quality?",
+    "expect_chunk_contains": "drifts toward the average of those ideas",
+    "expect_page": 1,
+    "source": "rag-fundamentals.txt"
+  },
+  {
+    "question": "What is hit rate at k?",
+    "expect_chunk_contains": "percentage of test questions for which the correct passage",
+    "expect_page": 1,
+    "source": "rag-fundamentals.txt"
+  },
+  {
+    "question": "How many tokens per minute does the free tier allow?",
+    "expect_chunk_contains": "8000 tokens per minute",
+    "expect_page": 1,
+    "source": "groq-free-tier.txt"
+  },
+  {
+    "question": "Are rate limits applied per API key or per organisation?",
+    "expect_chunk_contains": "per organisation rather than per API key",
+    "expect_page": 1,
+    "source": "groq-free-tier.txt"
+  },
+  {
+    "question": "How many reasoning tokens did the measured query use?",
+    "expect_chunk_contains": "40 were reasoning tokens",
+    "expect_page": 1,
+    "source": "groq-free-tier.txt"
+  },
+  {
+    "question": "Does lowering max_completion_tokens reduce the daily token cost?",
+    "expect_chunk_contains": "does not reduce what is charged against the daily allowance",
+    "expect_page": 1,
+    "source": "groq-free-tier.txt"
+  },
+  {
+    "question": "What is the difference between a 401 and a 403 response?",
+    "expect_chunk_contains": "401 is about who you are",
+    "expect_page": 1,
+    "source": "http-and-rest.txt"
+  },
+  {
+    "question": "Which status code should a successful delete return?",
+    "expect_chunk_contains": "204 means the request succeeded",
+    "expect_page": 1,
+    "source": "http-and-rest.txt"
+  },
+  {
+    "question": "Which content type is used for file uploads?",
+    "expect_chunk_contains": "multipart/form-data",
+    "expect_page": 1,
+    "source": "http-and-rest.txt"
+  },
+
+  {
+    "question": "What is the capital of France?",
+    "unanswerable": true
+  },
+  {
+    "question": "How long should sourdough bread prove before baking?",
+    "unanswerable": true
+  },
+  {
+    "question": "Who won the cricket match last night?",
+    "unanswerable": true
+  }
+]
