@@ -317,9 +317,17 @@ larger.
 disk. The sample corpus is re-indexed on every start so the demo always works,
 `/health` reports `persistence: "ephemeral"`, and the UI says so in the header.
 
-**The deployed API sleeps.** Render's free tier spins down after 15 minutes idle,
-so the first request after a quiet period takes the better part of a minute. The
-UI says it is waking rather than claiming the backend is dead.
+**The deployed app sleeps when idle.** The free host spins the container down
+after a quiet period, so the first load afterwards is slow while it restarts and
+re-seeds the sample corpus.
+
+**The deployed API is not publicly reachable.** Streamlit Community Cloud runs a
+Streamlit app and nothing else, so on that host the FastAPI service runs in a
+background thread inside the UI process rather than as its own deployment. The
+separation holds — same ASGI app, same HTTP calls, no business logic in the UI —
+but the `curl` examples above only work locally. Moving to a host that allows two
+services is a config change (`DOCLYN_API`), not a rewrite. Details and the
+free-tier comparison that led here are in [deploy/DEPLOY.md](deploy/DEPLOY.md).
 
 **The token ledger is ephemeral in deployment too.** `data/usage.jsonl` sits on
 the same disposable filesystem, so the daily budget guard forgets what was spent
@@ -362,7 +370,7 @@ frontend/app.py  Streamlit client — no business logic, never holds the API key
 scripts/         env check, chat CLI, token measurement, budget, evaluation
 data/sample/     demo corpus + eval set
 docs/SPEC.md     full technical specification, amended as stages completed
-deploy/DEPLOY.md step-by-step deployment (Render + Streamlit Community Cloud)
+deploy/DEPLOY.md step-by-step deployment, and why this host
 ```
 
 The frontend never calls Groq directly. Every call routes through the backend so

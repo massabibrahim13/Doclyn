@@ -1,134 +1,131 @@
 # Deploying Doclyn
 
-Two free services, no credit card:
+Deployed on **Streamlit Community Cloud** — free, GitHub sign-in, no credit card.
 
-| Part | Host | Why |
-|---|---|---|
-| **API** (FastAPI) | Render free tier | 750 instance-hours/month. Gives you a public API URL. |
-| **UI** (Streamlit) | Streamlit Community Cloud | Free, deploys straight from GitHub. |
+## Why this host, and not the obvious ones
 
-Neither offers a persistent disk, so the vector store is ephemeral. Handled:
-`DOCLYN_SEED_SAMPLE=1` re-indexes the sample corpus on every start, `/health`
-reports `persistence: "ephemeral"`, and the UI shows "Uploads reset on restart".
-Degraded but honest — never ship silently vanishing uploads.
+The hard constraint is zero cost with no card on file. Checked in September 2026:
 
-**Note on memory:** the API fits the free tier only because embeddings run on
-the ONNX build of all-MiniLM-L6-v2 bundled with ChromaDB instead of PyTorch.
-Don't add `sentence-transformers` to `requirements.txt` — it will not fit in
-512MB.
+| Host | Outcome |
+|---|---|
+| Hugging Face Spaces | Docker SDK now requires a PRO subscription; only Static Spaces are free, and Static cannot run Python. |
+| Render | Free web services now ask for a card at signup. |
+| Vercel | Wrong shape. Serverless functions are short-lived, so the vector store and embedding model would be rebuilt on every request, and the bundle size limit is well under what `chromadb` + `onnxruntime` need. |
+| **Streamlit Community Cloud** | **Free, no card, one long-running process.** Chosen. |
+
+Free tiers move. Re-check before repeating any of this.
+
+## The one architectural concession
+
+Streamlit Community Cloud runs a Streamlit app and nothing else, so the FastAPI
+service cannot be its own deployment. With `DOCLYN_EMBEDDED_API=1` the UI starts
+the ASGI app in a background thread on loopback and talks to it over HTTP.
+
+The separation is intact — same app, same HTTP calls, no business logic in the
+UI — but the API is not publicly reachable on this host. The `curl` examples in
+the README are therefore local-only. Moving to any host that allows two services
+is a config change, not a rewrite: drop `DOCLYN_EMBEDDED_API` and point
+`DOCLYN_API` at the API's URL.
+
+## Memory
+
+The API fits a small free tier only because embeddings use the ONNX build of
+all-MiniLM-L6-v2 bundled with ChromaDB rather than PyTorch. **Do not add
+`sentence-transformers` to `requirements.txt`** — it pulls in ~2.5GB and will
+exhaust the container. It stays commented out there as an optional local backend.
+
+## Persistence
+
+No free tier offers a persistent disk, so the vector store is ephemeral.
+Handled rather than hidden: `DOCLYN_SEED_SAMPLE=1` re-indexes the sample corpus
+on every start, `/health` reports `persistence: "ephemeral"`, and the UI shows
+"Uploads reset on restart".
 
 ---
 
-## 1. Push to GitHub
+## Steps
 
-Both hosts deploy from a GitHub repo.
+### 1. Push to GitHub
 
 ```bash
-git remote add origin https://github.com/<you>/doclyn.git
+git remote add origin https://github.com/<you>/Doclyn.git
 git push -u origin main
 ```
 
-Check `.env` is **not** in the repo:
+Confirm `.env` is not in the repo — this is the check that matters:
 
 ```bash
-git ls-files | findstr .env      # should show .env.example ONLY
+git ls-files | findstr env      # .env.example and check_env.py ONLY
 ```
 
-## 2. Deploy the API to Render
-
-1. https://render.com → sign in with GitHub
-2. **New → Web Service** → pick the `doclyn` repo
-3. Render reads `render.yaml` and fills most of it in. Confirm:
-   - Runtime **Python 3**, Plan **Free**
-   - Build: `pip install -r requirements.txt`
-   - Start: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1`
-   - Health check path: `/health`
-4. **Environment → Add Environment Variable:**
-
-   | Key | Value |
-   |---|---|
-   | `GROQ_API_KEY` | your key from console.groq.com/keys |
-
-   The rest come from `render.yaml`. Leave `DOCLYN_CORS_ORIGINS` for step 4.
-5. Deploy. First build takes a few minutes.
-6. Check it: open `https://<your-service>.onrender.com/health` — you want
-   `"status":"ok"`, `"stub_mode":false`, `"persistence":"ephemeral"` and a
-   non-zero `chunks_indexed` (that's the seeding working).
-
-Copy the service URL.
-
-## 3. Deploy the UI to Streamlit Community Cloud
+### 2. Deploy
 
 1. https://share.streamlit.io → sign in with GitHub
-2. **New app** → repo `doclyn`, branch `main`, main file `frontend/app.py`
-3. **Advanced settings → Secrets**, paste:
+2. **Create app** → **Deploy a public app from GitHub**
+3. Repository `<you>/Doclyn`, branch `main`, main file `frontend/app.py`
+4. **Advanced settings → Secrets:**
 
-   ```toml
-   DOCLYN_API = "https://<your-service>.onrender.com"
-   ```
-4. Deploy.
+```toml
+GROQ_API_KEY = "gsk_your_key_here"
+DOCLYN_EMBEDDED_API = "1"
+DOCLYN_STUB = "0"
+DOCLYN_PERSISTENCE = "ephemeral"
+DOCLYN_SEED_SAMPLE = "1"
+DOCLYN_RATE_LIMIT = "10"
+```
 
-## 4. Point CORS at the UI
+5. **Deploy.** First boot installs dependencies and downloads the embedding
+   model — several minutes.
 
-Back in Render → Environment:
+Secrets can be edited later under **Manage app → Settings → Secrets**, which
+reboots the app. `DOCLYN_RATE_LIMIT` can be tightened without touching code.
 
-| Key | Value |
-|---|---|
-| `DOCLYN_CORS_ORIGINS` | `https://<your-app>.streamlit.app` |
+### 3. Verify as a visitor
 
-Strictly, the UI calls the API server-side so CORS doesn't block it. Set it
-anyway — anyone embedding Doclyn in a web page calls from a browser, and that is
-the whole point of §6.0.
+Open the URL in a private window:
 
-Never `*`.
-
-## 5. Tighten the budget before sharing the link
-
-A public demo spends **your** org-wide quota.
-
-| Setting | Default | For a widely shared link |
-|---|---|---|
-| `DOCLYN_RATE_LIMIT` | 10 requests/hour/IP | 5 |
-| `DAILY_TOKEN_BUDGET` | 150,000 (~123 questions) | Lower in `config.py` if you want reserve |
-
-`DOCLYN_RATE_LIMIT` is a Render env var — changing it needs no code change.
-
-## 6. Verify as a visitor
-
-Open the Streamlit URL in a private window:
-
-- [ ] Green dot, model name, remaining budget in the header
+- [ ] Green status dot, model name and remaining budget in the header
 - [ ] **"Uploads reset on restart"** shown — correct and honest
 - [ ] Sample documents listed in the sidebar (seeded at startup)
-- [ ] An answerable question returns a cited answer, citations expand to source text
+- [ ] An answerable question returns a cited answer; citations expand to source text
 - [ ] An unanswerable question returns the grey refusal with no sources
-- [ ] **No stub-mode banner** — if you see one, `DOCLYN_STUB` isn't `0`
-- [ ] `curl https://<your-service>.onrender.com/health` works from a terminal
+- [ ] **No stub-mode banner** — one would mean `DOCLYN_STUB` isn't `"0"`
 
-Run `python scripts/check_budget.py` locally before recording a demo GIF.
+### 4. Before sharing the link widely
+
+A public demo spends **your** org-wide Groq quota.
+
+| Setting | Default | If the link travels |
+|---|---|---|
+| `DOCLYN_RATE_LIMIT` | 10 requests/hour/IP | 5 |
+| `DAILY_TOKEN_BUDGET` | 150,000 (~123 questions) | Lower in `config.py` |
+
+Run `python scripts/check_budget.py` locally before recording a demo.
 
 ---
 
 ## Known rough edges
 
-**First load after idle is slow.** Render's free tier spins down after 15
-minutes. A cold start takes most of a minute; the UI shows a "sleeping" message
-rather than claiming the backend is dead. Say so in the README — a reviewer who
-hits a 50-second load with no explanation assumes it's broken.
+**The app sleeps when idle.** First load after a quiet period is slow while the
+container restarts and re-seeds. Worth saying in the README — a reviewer who
+hits a long load with no explanation assumes it's broken.
 
-**The ledger resets with the filesystem.** `data/usage.jsonl` is ephemeral too,
-so `DAILY_TOKEN_BUDGET` forgets what was spent whenever the service restarts. On
-an ephemeral host the per-IP cap is the real protection.
+**The ledger is ephemeral too.** `data/usage.jsonl` sits on the same disposable
+filesystem, so `DAILY_TOKEN_BUDGET` forgets what was spent on restart. On this
+host the per-IP cap is the real protection.
 
-**Rate limiting is per-process and in-memory.** Fine for one free instance.
+**Rate limiting is in-memory and per-process.** Fine for one instance.
 
 ## If it fails
 
-**Build runs out of memory** — something pulled in PyTorch. Check
-`requirements.txt` for `sentence-transformers`.
+**`ModuleNotFoundError: backend`** — `frontend/app.py` needs the project root on
+`sys.path`; the fix is the `sys.path.insert` near the top of that file.
 
-**`/health` returns 500** — usually a missing `GROQ_API_KEY`. Check Render logs.
+**App loads but the status dot is red** — the embedded API failed to start. It
+prints the traceback on the page; **Manage app → logs** has the full detail.
 
-**UI says backend not responding** — either a cold start (wait a minute), or
-`DOCLYN_API` in Streamlit secrets is wrong. It needs the scheme and no trailing
-slash: `https://x.onrender.com`, not `x.onrender.com/`.
+**Out of memory during install** — something pulled in PyTorch. Check
+`requirements.txt`.
+
+**Stub-mode banner in production** — `DOCLYN_STUB` must be the string `"0"` in
+secrets, with quotes.
