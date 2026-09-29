@@ -82,7 +82,15 @@ DISTANCE_METRIC = "cosine"            # set explicitly in collection metadata
 # is the failure that actually costs something.
 DAILY_TOKEN_BUDGET = 150_000
 
-MAX_COMPLETION_TOKENS = 800           # 800 not 600: reasoning tokens share this
+# Measured 2026-09-29 (scripts/measure_tokens.py): a real cited answer cost 104
+# completion tokens — 64 visible + 40 reasoning — at reasoning_effort="low".
+# 500 keeps ~5x headroom over that.
+#
+# This is more than a cap. Groq RESERVES this whole number against the 8,000
+# TPM limit at request time, not what you actually use: a 1,109-token prompt
+# with an 800 cap consumed 1,909 of the per-minute allowance. So lowering this
+# directly buys more queries per minute.
+MAX_COMPLETION_TOKENS = 500
 MAX_HISTORY_TURNS = 4                 # truncated SERVER-side, never trust the client
 MAX_TOP_K = 6                         # enforced in the Pydantic model (Stage 2)
 MAX_MESSAGE_CHARS = 4_000             # enforced in the Pydantic model (Stage 2)

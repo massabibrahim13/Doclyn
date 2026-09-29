@@ -240,8 +240,17 @@ latency matters.
 - **`gpt-oss` is a reasoning model.** Reasoning tokens count toward the completion budget.
   Set **`reasoning_effort: "low"`** and **`include_reasoning: false`** (gpt-oss uses
   `include_reasoning`, *not* `reasoning_format` — that parameter is for other models).
-  ⚠️ Groq's docs do **not** state exactly how reasoning tokens are counted against
-  `max_completion_tokens`. **This must be measured in Stage 1 (§10.1), not assumed.**
+  ✅ **Measured 2026-09-29 (Stage 1).** Reasoning tokens are included in
+  `completion_tokens` *and* itemised separately at
+  `usage.completion_tokens_details.reasoning_tokens`. A real cited answer cost 104
+  completion tokens: 64 visible + 40 reasoning. So reasoning overhead at
+  `reasoning_effort: "low"` is small and fully observable — no longer a guess.
+- **⚠️ `max_completion_tokens` is RESERVED against TPM, not billed on use.**
+  Measured: a 1,109-token prompt with an 800 cap returned
+  `x-ratelimit-remaining-tokens: 6091` — exactly `8000 − (1109 + 800)`. The
+  per-minute allowance is charged the *cap*, while the daily ledger records
+  *actual* usage (1,213). Consequence: lowering `MAX_COMPLETION_TOKENS` directly
+  increases queries per minute. This is why it was cut from 800 to 500.
 - **Rate limits are per organization, not per key.** Extra keys do not raise them.
 - **`429` is a normal runtime state on a free tier, not an exception.** Groq returns
   `retry-after` plus `x-ratelimit-remaining-requests` / `x-ratelimit-remaining-tokens` on
