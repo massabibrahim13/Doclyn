@@ -1,0 +1,7 @@
+.venv/
+chroma_store/
+data/usage.jsonl
+__pycache__/
+*.pyc
+.git/
+.env

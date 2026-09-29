@@ -1,6 +1,6 @@
 # DOCLYN — TECHNICAL SPECIFICATION
 Version 1.1 · Last updated 2026-09-28
-Owner: Massab · Status: **Stage 4 complete — RAG, citations, refusal path**
+Owner: Massab · Status: **v1 COMPLETE — all six stages built, deploy files ready**
 
 This document is the complete build reference. A fresh chat needs nothing else.
 
@@ -1118,16 +1118,22 @@ per-IP cap as the primary protection.
 
 ## 13. OPEN DECISIONS
 
-1. **Demo corpus** — which documents ship in `data/sample/`? Must be publicly shareable
-   (the repo is a portfolio piece and docs pass through a free-tier provider). NIT course
-   notes or a public whitepaper are safe; client material is not. **Needed by Stage 3.**
-   Also becomes the eval set, so pick something with factual, checkable statements.
+1. ~~**Demo corpus**~~ — **RESOLVED 2026-09-29.** Three purpose-written documents ship in
+   `data/sample/`: RAG fundamentals, the measured Groq free-tier notes, and an HTTP/REST
+   reference. All publicly shareable, no client material, and full of factual statements
+   that make good eval targets. Swappable — drop real PDFs in and re-run
+   `test_retrieval.py`. **Note:** the hit-rate figures were measured against this small
+   corpus and will change on a larger one.
 2. **Frontend v2** — React/Next.js after v1, or does Streamlit ship as final? Affects how
    much polish `/chat/stream` ergonomics get. Deferrable to Stage 5.
 3. **Local hardware** — GPU/VRAM unknown. Decides whether an offline Ollama mode is worth
    adding in v2. Not blocking.
-4. **Deployment host** — depends on which free tier offers a persistent disk for
-   `chroma_store/`. Verify at Stage 6 (§12).
+4. ~~**Deployment host**~~ — **RESOLVED 2026-09-29: Hugging Face Spaces (Docker SDK).**
+   Checked: no free tier offers a persistent disk, so §12 option 2 applies —
+   ephemeral storage, sample corpus seeded at startup, `/health` reports
+   `persistence: "ephemeral"`, UI warns. The deciding factor was memory, not
+   storage: `sentence-transformers` pulls in PyTorch, and Render's free tier
+   caps at 512MB RAM while Spaces gives 16GB. See `deploy/DEPLOY.md`.
 
 ---
 

@@ -149,3 +149,21 @@ def missing_api_key() -> bool:
     than at the first user question.
     """
     return not STUB_MODE and not LLM_API_KEY
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Deployment (§12)
+# ──────────────────────────────────────────────────────────────────────────────
+# A public demo spends YOUR org-wide free quota. One abusive visitor can drain
+# the whole day, so a per-IP cap is required before deploying — not optional.
+RATE_LIMIT_REQUESTS = int(os.getenv("DOCLYN_RATE_LIMIT", "10"))
+RATE_LIMIT_WINDOW_SECONDS = 3600
+
+# "durable" only if the host gives chroma_store/ a real disk. Most free tiers do
+# not. Set DOCLYN_PERSISTENCE=ephemeral there so /health says so and the UI warns
+# the user instead of silently losing their uploads.
+PERSISTENCE = os.getenv("DOCLYN_PERSISTENCE", "durable")
+
+# On an ephemeral host the index is empty after every restart, which would leave
+# the demo broken. Seeding the committed sample corpus keeps it working.
+SEED_SAMPLE_ON_STARTUP = os.getenv("DOCLYN_SEED_SAMPLE", "0") == "1"

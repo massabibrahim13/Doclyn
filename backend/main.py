@@ -8,16 +8,17 @@ is always in sync with the real schemas.
 """
 
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import PurePath
 
-from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from openai import APIConnectionError, APIStatusError, RateLimitError
 
-from backend import config, ingest, llm, prompts, retrieve, store, usage
+from backend import config, ingest, llm, prompts, ratelimit, retrieve, store, usage
 from backend.models import (
     BudgetOut,
     ChatRequest,
@@ -31,7 +32,31 @@ from backend.models import (
     UsageResponse,
 )
 
+def _seed_sample_corpus() -> None:
+    """On an ephemeral host the index is empty after every restart. Seeding the
+    committed sample corpus keeps the public demo working rather than greeting
+    visitors with nothing to ask about. Off by default — local dev keeps its
+    own uploads."""
+    if not config.SEED_SAMPLE_ON_STARTUP:
+        return
+    try:
+        if store.counts()[1] > 0:
+            return
+        for path in sorted(config.SAMPLE_DIR.glob("*")):
+            if path.suffix.lower() in config.ALLOWED_EXTENSIONS:
+                ingest.ingest_document(path.name, path.read_bytes())
+    except Exception:
+        pass   # a demo without seed data still runs; a crashed boot does not
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    _seed_sample_corpus()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Doclyn API",
     description="Document-grounded chat. The API is the product; the UI is one client.",
     version="0.4.0",
@@ -129,7 +154,7 @@ def health() -> HealthResponse:
         stub_mode=config.STUB_MODE,
         documents_indexed=documents,
         chunks_indexed=chunks,
-        persistence="durable",  # local disk; re-checked against the host at Stage 6
+        persistence=("durable" if config.PERSISTENCE == "durable" else "ephemeral"),
     )
 
 
@@ -200,7 +225,7 @@ def delete_document(document_id: str) -> Response:
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest) -> ChatResponse:
+def chat(req: ChatRequest, _: None = Depends(ratelimit.enforce)) -> ChatResponse:
     """Query endpoint, non-streaming.
 
     Order matters here and is the whole design:
@@ -287,7 +312,7 @@ def _sse(event: str, payload: dict) -> str:
 
 
 @app.post("/chat/stream")
-def chat_stream(req: ChatRequest):
+def chat_stream(req: ChatRequest, _: None = Depends(ratelimit.enforce)):
     """Same request shape as /chat, delivered as server-sent events (§6.7).
 
     Citations are sent FIRST, before any token, because they are already known
