@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend import embeddings, ingest, store  # noqa: E402
+from backend import embeddings, ingest, retrieve, store  # noqa: E402
 from backend.config import SAMPLE_DIR, SIM_FLOOR, TOP_K_DEFAULT  # noqa: E402
 
 parser = argparse.ArgumentParser()
@@ -108,6 +108,23 @@ n = len(answerable)
 rate = hits / n * 100
 print(f"\n  HIT RATE @ {args.top_k} : {hits}/{n} = {rate:.1f}%")
 print(f"  correct page    : {page_hits}/{n}")
+
+# ── The same questions through the PRODUCTION path ───────────────────────────
+# Above measures raw retrieval. This measures what actually survives the floor
+# and any filtering in retrieve.py and reaches the model. They are different
+# code paths, and a gap between them is a bug that a raw-only eval will miss.
+delivered = 0
+for case in answerable:
+    chunks, grounded = retrieve.retrieve(case["question"], args.top_k)
+    needle = _norm(case["expect_chunk_contains"])
+    if grounded and any(needle in _norm(ch["text"]) for ch in chunks):
+        delivered += 1
+
+print(f"  DELIVERED @ {args.top_k}: {delivered}/{n} = {delivered / n * 100:.1f}%"
+      "   <- what the model actually receives")
+if delivered < hits:
+    print(f"  WARNING: {hits - delivered} chunk(s) were retrieved but lost before "
+          "reaching the model.")
 
 # ── Unanswerable questions: what do they score? ──────────────────────────────
 noise_scores = []

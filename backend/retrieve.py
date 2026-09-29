@@ -21,16 +21,13 @@ def retrieve(question: str, top_k: int = TOP_K_DEFAULT,
     if not grounded:
         return [], False
 
-    # Adjacent chunks from the same document overlap by design, so sending both
-    # wastes tokens on duplicated text.
-    kept, seen = [], set()
-    for h in sorted(hits, key=lambda x: -x["score"]):
-        if h["score"] < sim_floor:
-            continue
-        key = (h["metadata"]["document_id"], h["metadata"]["chunk_index"])
-        if any(k[0] == key[0] and abs(k[1] - key[1]) <= 1 for k in seen):
-            continue
-        seen.add(key)
-        kept.append(h)
-
+    # Keep every chunk that clears the floor, best first.
+    #
+    # An earlier version collapsed ADJACENT chunks from the same document, on the
+    # theory that their overlap duplicates text. Measured 2026-09-29: that was a
+    # bad trade. Asking "what overlap is recommended?" retrieved the right chunk
+    # at rank 2, the filter dropped it for being next to rank 1, and the model
+    # correctly answered that it didn't know. Overlap costs ~10% duplicated
+    # tokens; dropping the chunk holding the answer costs the answer.
+    kept = [h for h in sorted(hits, key=lambda x: -x["score"]) if h["score"] >= sim_floor]
     return kept, True

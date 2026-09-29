@@ -3,27 +3,28 @@
 Run it:
     uvicorn backend.main:app --reload
 
-Then open http://localhost:8000/docs — FastAPI generates that page from the
-Pydantic models, so it is always in sync with the real schemas.
-
-Stage 2 scope: /health, /usage, /chat. No retrieval yet — /chat answers from
-general knowledge and returns grounded=true with no citations. Stage 4 wires
-in RAG behind the same response shape, so clients don't change.
+Docs at http://localhost:8000/docs, generated from the Pydantic models, so it
+is always in sync with the real schemas.
 """
 
 from datetime import datetime, timezone
+from pathlib import PurePath
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from openai import APIConnectionError, APIStatusError, RateLimitError
 
-from backend import config, llm, prompts, store, usage
+from backend import config, ingest, llm, prompts, retrieve, store, usage
 from backend.models import (
     BudgetOut,
     ChatRequest,
     ChatResponse,
+    Citation,
+    DocumentInfo,
+    DocumentListResponse,
+    DocumentUploadResponse,
     HealthResponse,
     UsageOut,
     UsageResponse,
@@ -32,7 +33,7 @@ from backend.models import (
 app = FastAPI(
     title="Doclyn API",
     description="Document-grounded chat. The API is the product; the UI is one client.",
-    version="0.2.0",
+    version="0.4.0",
 )
 
 app.add_middleware(
@@ -43,29 +44,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+SNIPPET_CHARS = 220
+
 
 # ── Error handling ───────────────────────────────────────────────────────────
-# On a free tier a 429 is normal runtime state, not an exception. These turn
-# provider errors into the documented API contract so clients see one shape.
 
 
 @app.exception_handler(RequestValidationError)
 async def _validation_failed(request: Request, exc: RequestValidationError):
     """FastAPI returns 422 for schema violations by default. §6.5 documents 400,
     so the contract wins — clients shouldn't have to read our framework choice."""
-    # exc.errors() can carry a raw ValueError in "ctx" (whenever a custom
-    # field_validator raised one), which json.dumps chokes on. Keep only the
-    # three fields a client actually needs.
     clean = [
         {"field": ".".join(str(p) for p in e.get("loc", [])),
          "msg": e.get("msg", ""),
          "type": e.get("type", "")}
         for e in exc.errors()
     ]
-    return JSONResponse(
-        status_code=400,
-        content={"detail": "Invalid request", "errors": clean},
-    )
+    return JSONResponse(status_code=400,
+                        content={"detail": "Invalid request", "errors": clean})
 
 
 @app.exception_handler(RateLimitError)
@@ -89,10 +85,13 @@ async def _provider_unreachable(request: Request, exc: APIConnectionError):
 
 @app.exception_handler(APIStatusError)
 async def _provider_error(request: Request, exc: APIStatusError):
-    return JSONResponse(
-        status_code=502,
-        content={"detail": f"Provider returned {exc.status_code}"},
-    )
+    return JSONResponse(status_code=502,
+                        content={"detail": f"Provider returned {exc.status_code}"})
+
+
+@app.exception_handler(ingest.IngestError)
+async def _ingest_failed(request: Request, exc: ingest.IngestError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -106,7 +105,11 @@ def _budget() -> BudgetOut:
     )
 
 
-# ── Routes ───────────────────────────────────────────────────────────────────
+def _known_document_ids() -> set[str]:
+    return {d["document_id"] for d in store.list_documents()}
+
+
+# ── Health & usage ───────────────────────────────────────────────────────────
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -142,20 +145,95 @@ def get_usage() -> UsageResponse:
     )
 
 
+# ── Documents ────────────────────────────────────────────────────────────────
+
+
+@app.post("/documents", response_model=DocumentUploadResponse, status_code=201)
+async def upload_document(response: Response,
+                          file: UploadFile = File(...)) -> DocumentUploadResponse:
+    """Ingest one document. Never calls the LLM — cannot be rate limited, costs nothing.
+
+    Returns 201 for a new document, 200 for one already indexed.
+    """
+    # Take the basename only. A filename is client-supplied text and could
+    # contain path separators.
+    filename = PurePath(file.filename or "upload").name
+    if PurePath(filename).suffix.lower() not in config.ALLOWED_EXTENSIONS:
+        raise HTTPException(400, "Only .pdf and .txt are supported")
+
+    data = await file.read()
+    if len(data) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "File exceeds 10 MB limit")
+    if not data:
+        raise HTTPException(400, "No extractable text found; OCR is not supported in v1")
+
+    try:
+        result = ingest.ingest_document(filename, data)
+    except ingest.IngestError:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, "Ingestion failed") from exc
+
+    # A duplicate is not an error — the document is already there and usable.
+    if result["duplicate"]:
+        response.status_code = 200
+
+    return DocumentUploadResponse(**result)
+
+
+@app.get("/documents", response_model=DocumentListResponse)
+def list_documents() -> DocumentListResponse:
+    return DocumentListResponse(
+        documents=[DocumentInfo(**d) for d in store.list_documents()]
+    )
+
+
+@app.delete("/documents/{document_id}", status_code=204)
+def delete_document(document_id: str) -> Response:
+    if not store.delete_document(document_id):
+        raise HTTPException(404, "Unknown document_id")
+    return Response(status_code=204)
+
+
+# ── Chat ─────────────────────────────────────────────────────────────────────
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest) -> ChatResponse:
-    """Non-streaming query endpoint.
+    """Query endpoint, non-streaming.
 
-    The route validates, delegates and shapes the response. No business logic
-    lives here — that belongs in the modules it calls.
+    Order matters here and is the whole design:
+      retrieve -> floor check -> (maybe stop) -> budget preflight -> call -> record
+
+    The two cheapest outcomes come first. An ungrounded question and an
+    over-budget request both return without spending a single token.
     """
-    # Stage 4 replaces this with the real prompt once documents exist.
-    system = prompts.NO_RAG_SYSTEM_PROMPT
-    history = [m.model_dump() for m in req.history]
+    if req.document_ids:
+        unknown = set(req.document_ids) - _known_document_ids()
+        if unknown:
+            raise HTTPException(404, f"Unknown document_id: {', '.join(sorted(unknown))}")
+
+    chunks, grounded = retrieve.retrieve(req.message, req.top_k, req.document_ids)
+
+    # Nothing cleared the similarity floor. Refuse WITHOUT calling the model:
+    # correct behaviour and a free saving at the same time.
+    if not grounded:
+        return ChatResponse(
+            answer=prompts.REFUSAL_MESSAGE,
+            citations=[],
+            usage=UsageOut(input_tokens=0, output_tokens=0),
+            grounded=False,
+            budget=_budget(),
+        )
+
+    context_block = prompts.format_context_block(chunks)
+    user_content = context_block + "\n\n" + req.message
+    # Trim first: the preflight below must estimate the prompt that actually
+    # gets sent, not the full history the client happened to include.
+    history = llm.trim_history([m.model_dump() for m in req.history])
 
     # Preflight (§9.6 guardrail 3): refuse locally before the provider refuses us.
-    # Runs before the call, so an over-budget request costs nothing.
-    prompt_text = system + "".join(m["content"] for m in history) + req.message
+    prompt_text = prompts.SYSTEM_PROMPT + "".join(m["content"] for m in history) + user_content
     allowed, _estimate = usage.preflight_ok(prompt_text)
     if not allowed and not config.STUB_MODE:
         raise HTTPException(
@@ -164,17 +242,35 @@ def chat(req: ChatRequest) -> ChatResponse:
                     "Resets 00:00 UTC."),
         )
 
-    result = llm.complete(system, history, req.message)
+    result = llm.complete(prompts.SYSTEM_PROMPT, history, user_content)
 
     if not config.STUB_MODE:
         usage.record("/chat", result["input_tokens"], result["output_tokens"],
                      result.get("groq_remaining"))
 
+    # marker matches the index= attribute in the context block, so [1] in the
+    # answer text lines up with citations[0] without parsing the reply.
+    citations = [
+        Citation(
+            marker=i,
+            document_id=c["metadata"]["document_id"],
+            filename=c["metadata"].get("filename", ""),
+            page=c["metadata"].get("page"),
+            chunk_id=c["chunk_id"],
+            snippet=c["text"][:SNIPPET_CHARS].strip() +
+                    ("..." if len(c["text"]) > SNIPPET_CHARS else ""),
+            score=c["score"],
+        )
+        for i, c in enumerate(chunks, start=1)
+    ]
+
     return ChatResponse(
-        answer=result["text"],
-        citations=[],          # Stage 4
+        # Rewrite stray citation styles and drop markers pointing at documents
+        # that were never sent (§8.4 v2).
+        answer=prompts.normalize_citations(result["text"], max_marker=len(citations)),
+        citations=citations,
         usage=UsageOut(input_tokens=result["input_tokens"],
                        output_tokens=result["output_tokens"]),
-        grounded=True,         # Stage 4 makes this meaningful
+        grounded=True,
         budget=_budget(),
     )

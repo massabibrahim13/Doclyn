@@ -11,7 +11,10 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from backend.config import DAILY_TOKEN_BUDGET, MAX_COMPLETION_TOKENS, USAGE_LEDGER
+# Imported as a module, not by name: `from config import X` freezes X at import
+# time, so changing a limit for a test (or at runtime) would silently do nothing.
+from backend import config
+from backend.config import USAGE_LEDGER
 
 
 def _today() -> str:
@@ -70,7 +73,7 @@ def queries_today() -> int:
 
 
 def remaining_today() -> int:
-    return max(0, DAILY_TOKEN_BUDGET - today_total())
+    return max(0, config.DAILY_TOKEN_BUDGET - today_total())
 
 
 def last_groq_remaining() -> int | None:
@@ -97,5 +100,5 @@ def preflight_ok(prompt_text: str) -> tuple[bool, int]:
     completion cap gets used. Better to refuse a request that would have fit
     than to allow one that doesn't.
     """
-    estimate = estimate_tokens(prompt_text) + MAX_COMPLETION_TOKENS
-    return (today_total() + estimate <= DAILY_TOKEN_BUDGET), estimate
+    estimate = estimate_tokens(prompt_text) + config.MAX_COMPLETION_TOKENS
+    return (today_total() + estimate <= config.DAILY_TOKEN_BUDGET), estimate

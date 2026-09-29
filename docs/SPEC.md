@@ -1,6 +1,6 @@
 # DOCLYN — TECHNICAL SPECIFICATION
 Version 1.1 · Last updated 2026-09-28
-Owner: Massab · Status: **Stage 1 complete — token accounting measured, §9.1 corrected**
+Owner: Massab · Status: **Stage 4 complete — RAG, citations, refusal path**
 
 This document is the complete build reference. A fresh chat needs nothing else.
 
@@ -633,16 +633,69 @@ lower `top_k` instead.
 }
 ```
 
-### 8.2 Retrieval parameters
+### 8.2 Retrieval parameters — **MEASURED 2026-09-29**
 | Parameter | v1 value |
 |---|---|
 | `top_k` | **3** (per-request, 1–6) |
-| Similarity floor | tune on the eval set; if **all** chunks fall below → `grounded: false`, skip the LLM call |
+| `SIM_FLOOR` | **0.25** — tuned, was guessed at 0.35 |
 | Filter | optional `document_id` metadata filter |
-| Dedup | collapse adjacent chunk indices from the same doc before prompting |
+| Dedup | ~~collapse adjacent chunk indices~~ **removed** — see below |
 
 The floor does double duty: it prevents ungrounded answers *and* makes unanswerable
 questions cost zero tokens.
+
+**Stage 3 eval results** (15 questions: 12 answerable, 3 deliberate noise;
+3-document sample corpus; `scripts/test_retrieval.py`, zero API calls):
+
+| chunk size | chunks indexed | hit rate @3 | correct page | ranked #1 | input tokens/query |
+|---|---|---|---|---|---|
+| **350** (chosen) | 10 | **11/12 — 91.7%** | 11/12 | 8/12 | ~1,109 measured |
+| 500 | 7 | 11/12 — 91.7% | 11/12 | 10/12 | ~1,550 est. |
+
+**Chunk size: 350 kept.** 500 ranked the correct chunk first more often, but hit
+rate @3 was identical and each query carried ~40% more context. Rank *inside* the
+top-k is irrelevant — all k chunks are pasted into the prompt regardless — so the
+only thing 500 bought was cost.
+
+**`SIM_FLOOR`: 0.35 → 0.25.** The guessed value would have refused three real
+questions (scoring 0.192, 0.260, 0.285). Measured spread:
+
+- real questions: 0.19 – 0.64
+- noise questions: 0.04 – 0.22
+
+**These overlap**, so no threshold separates them cleanly. 0.25 blocks all three
+noise questions at the cost of one false refusal in twelve. That direction is
+chosen deliberately: a visible refusal is an honest failure, a confident answer to
+an unanswerable question is not.
+
+**Adjacent-chunk collapsing: specified, implemented, then removed (Stage 4).**
+
+§8.2 originally called for collapsing adjacent chunks from the same document
+before prompting, since their overlap duplicates text. In practice it discarded
+answers. Asking *"what overlap is recommended?"* retrieved the correct chunk at
+rank 2; the filter dropped it for sitting next to rank 1; only the rank-1 chunk
+reached the model, and the model correctly replied that the document did not say.
+Overlap costs roughly 10% duplicated tokens. Dropping the chunk that holds the
+answer costs the answer.
+
+**The way this was found is the more useful lesson.** All 13 Stage 4 checks
+passed while the system returned a wrong answer, because every check tested
+mechanics — status codes, flags, ledger movement — and none tested content. The
+Stage 3 eval missed it too, because it called `store.query()` directly while
+production goes through `retrieve.retrieve()`: a passing eval on a code path the
+app does not use. Both harnesses were corrected: `test_retrieval.py` now reports
+a **delivered hit rate** through the production path alongside the raw one, and
+`test_stage4.py` asserts the answer actually contains the fact.
+
+**Two honest limitations to carry into the README:**
+
+1. **The corpus is tiny.** Returning 3 of 10 chunks means top-k covers 30% of the
+   index, so 91.7% flatters the system. This number will fall on a real corpus and
+   must be re-measured there before it is quoted as evidence of anything.
+2. **Short questions retrieve badly.** The one persistent miss — *"What is hit rate
+   at k?"* — failed at both chunk sizes. A six-word question produces a query vector
+   with little signal to match against 1,400-character chunks. Query expansion (§14)
+   is the standard fix and is out of scope for v1.
 
 ### 8.3 Prompt assembly order
 ```
@@ -682,10 +735,25 @@ Rules:
 - If the question is ambiguous, ask one clarifying question instead of guessing.
 - Keep answers concise and factual. No preamble.
 ```
-Keep every revision in `prompts.py` with a comment naming the failure it fixed. Open-weight
-models follow multi-rule prompts less rigidly than frontier models, so expect several
-iterations on the refusal rule and the citation format. **That iteration log is portfolio
-material** — it shows prompts were tested, not copied.
+Keep every revision in `prompts.py` with a comment naming the failure it fixed.
+
+**Iteration log**
+
+| Version | Date | Failure observed | Change |
+|---|---|---|---|
+| v1 | 2026-09-28 | — | initial draft |
+| v2 | 2026-09-29 | `gpt-oss-120b` emitted `【2†L7-L9】` instead of `[2]` — a citation convention from its training, complete with CJK brackets and line anchors | spelled the format out in ASCII, named the wrong forms explicitly, and gave a correct/wrong example |
+
+**The v1 rule said what to do but not what *not* to do**, and the model filled the
+gap from habit. This is precisely the open-weight prompt-adherence gap §4.0
+accepted as Groq's one real cost against Gemini — observed, cheap to fix, not a
+reason to reopen the provider decision.
+
+**Prompting alone is not a guarantee**, so v2 is backed by
+`prompts.normalize_citations()`: it rewrites stray bracket styles as `[n]` and
+deletes markers numbered above the count of chunks actually sent. A citation
+pointing at a document that was never provided is a hallucinated source, and worse
+than no citation because it looks verifiable.
 
 ---
 

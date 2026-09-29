@@ -26,17 +26,26 @@ def _get_client() -> OpenAI:
     return _client
 
 
-def build_messages(system: str, history: list[dict], user_content: str) -> list[dict]:
-    """system + trimmed history + the new question.
+def trim_history(history: list[dict]) -> list[dict]:
+    """Keep only the last MAX_HISTORY_TURNS exchanges (a turn = user + assistant).
 
-    History is trimmed HERE, server-side. The client sends whatever it likes;
-    we never trust it to have limited itself, because a careless client would
-    spend our quota.
+    Done server-side. The client sends whatever it likes and we never trust it to
+    have limited itself, because a careless client spends our quota.
+
+    Public because the budget preflight must estimate the prompt that will
+    ACTUALLY be sent. Estimating the untrimmed history would refuse requests
+    that would have fit.
     """
-    trimmed = history[-(config.MAX_HISTORY_TURNS * 2):] if history else []
+    if not history:
+        return []
+    return history[-(config.MAX_HISTORY_TURNS * 2):]
+
+
+def build_messages(system: str, history: list[dict], user_content: str) -> list[dict]:
+    """system + trimmed history + the new question."""
     return (
         [{"role": "system", "content": system}]
-        + trimmed
+        + trim_history(history)
         + [{"role": "user", "content": user_content}]
     )
 

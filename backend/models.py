@@ -95,3 +95,25 @@ class UsageResponse(BaseModel):
     daily_budget: int
     remaining: int
     groq_remaining_tpm: int | None = None
+
+
+class DocumentInfo(BaseModel):
+    document_id: str
+    filename: str
+    pages: int
+    chunks: int
+    ingested_at: str | None = None
+
+
+class DocumentListResponse(BaseModel):
+    documents: list[DocumentInfo]
+
+
+class DocumentUploadResponse(BaseModel):
+    document_id: str
+    filename: str
+    content_hash: str
+    pages: int
+    chunks_created: int
+    duplicate: bool
+    ingested_at: str | None = None
