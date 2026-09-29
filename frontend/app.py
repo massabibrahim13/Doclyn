@@ -12,10 +12,17 @@ normal answer, the grounding guarantee is invisible and therefore worthless.
 
 import json
 import os
+import sys
 import time
+from pathlib import Path
 
 import httpx
 import streamlit as st
+
+# Running frontend/app.py puts frontend/ on the import path, not the project
+# root, so `from backend...` would fail. Only bites in embedded mode, because
+# until now this file never imported the backend at all.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # ── Configuration, before anything else ──────────────────────────────────────
 # Streamlit Community Cloud supplies configuration through st.secrets, but
@@ -44,23 +51,45 @@ def _start_embedded_api() -> str:
     second server on the same port would fail on the first click.
     """
     import threading
+    import traceback
 
-    import uvicorn
+    try:
+        import uvicorn
 
-    from backend.main import app as api_app
+        from backend.main import app as api_app
+    except Exception:
+        # A red status dot would blame the network for what is an import error.
+        st.error("Could not load the backend:", icon="💥")
+        st.code(traceback.format_exc())
+        st.stop()
 
-    server = uvicorn.Server(uvicorn.Config(
-        api_app, host="127.0.0.1", port=8000, log_level="warning"))
-    threading.Thread(target=server.run, daemon=True).start()
+    errors: list[str] = []
 
-    for _ in range(90):
+    def _run():
         try:
-            if httpx.get("http://127.0.0.1:8000/health", timeout=2).status_code == 200:
-                break
+            uvicorn.Server(uvicorn.Config(
+                api_app, host="127.0.0.1", port=8000, log_level="warning")).run()
+        except Exception:
+            errors.append(traceback.format_exc())
+
+    threading.Thread(target=_run, daemon=True).start()
+
+    # First boot downloads the embedding model, which is slow on a cold host.
+    for _ in range(180):
+        if errors:
+            st.error("The backend crashed on startup:", icon="💥")
+            st.code(errors[0])
+            st.stop()
+        try:
+            if httpx.get("http://127.0.0.1:8000/health", timeout=3).status_code == 200:
+                return "http://127.0.0.1:8000"
         except httpx.HTTPError:
             pass
         time.sleep(1)
-    return "http://127.0.0.1:8000"
+
+    st.error("The backend did not start within 3 minutes. Check the app logs.",
+             icon="⏳")
+    st.stop()
 
 
 def _api_url() -> str:
