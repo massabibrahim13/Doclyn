@@ -114,14 +114,20 @@ def complete(system: str, history: list[dict], user_content: str) -> dict:
     }
 
 
-def stream_answer(system: str, history: list[dict], user_content: str) -> Iterator[str]:
-    """Yields text fragments as they arrive. Used by /chat/stream in Stage 5.
+def stream_answer(system: str, history: list[dict], user_content: str,
+                  usage_out: dict | None = None) -> Iterator[str]:
+    """Yields text fragments as they arrive.
 
-    Note: in streaming mode the usage object only arrives in the FINAL chunk,
-    which is why the SSE contract sends usage in a separate `done` event.
+    usage_out, if given, is filled in once the stream ends. It has to work this
+    way because in streaming mode the usage object only arrives in the FINAL
+    chunk — a chunk that carries no text at all. That is exactly why the SSE
+    contract (§6.7) reports usage in a separate `done` event rather than
+    alongside the tokens.
     """
     if config.STUB_MODE:
         yield from _stub_stream()
+        if usage_out is not None:
+            usage_out.update(input_tokens=0, output_tokens=0, groq_remaining=None)
         return
 
     stream = _get_client().chat.completions.create(
@@ -133,5 +139,11 @@ def stream_answer(system: str, history: list[dict], user_content: str) -> Iterat
         extra_body=_extra_body(),
     )
     for chunk in stream:
+        if getattr(chunk, "usage", None) and usage_out is not None:
+            usage_out.update(
+                input_tokens=chunk.usage.prompt_tokens,
+                output_tokens=chunk.usage.completion_tokens,
+                groq_remaining=None,
+            )
         if chunk.choices and chunk.choices[0].delta.content:
             yield chunk.choices[0].delta.content

@@ -1,0 +1,7 @@
+# Streamlit advertises a 200MB upload limit by default, which contradicts the
+# backend's 10MB cap — the sidebar would promise something the API rejects.
+[server]
+maxUploadSize = 10
+
+[browser]
+gatherUsageStats = false

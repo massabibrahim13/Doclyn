@@ -7,13 +7,14 @@ Docs at http://localhost:8000/docs, generated from the Pydantic models, so it
 is always in sync with the real schemas.
 """
 
+import json
 from datetime import datetime, timezone
 from pathlib import PurePath
 
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from openai import APIConnectionError, APIStatusError, RateLimitError
 
 from backend import config, ingest, llm, prompts, retrieve, store, usage
@@ -274,3 +275,108 @@ def chat(req: ChatRequest) -> ChatResponse:
         grounded=True,
         budget=_budget(),
     )
+
+
+# ── Streaming chat ───────────────────────────────────────────────────────────
+
+
+def _sse(event: str, payload: dict) -> str:
+    """One server-sent event. The blank line at the end is the delimiter and is
+    not optional — without it the client never sees the message."""
+    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
+@app.post("/chat/stream")
+def chat_stream(req: ChatRequest):
+    """Same request shape as /chat, delivered as server-sent events (§6.7).
+
+    Citations are sent FIRST, before any token, because they are already known
+    at retrieval time. The UI can render the sources panel while the answer is
+    still typing.
+    """
+    if req.document_ids:
+        unknown = set(req.document_ids) - _known_document_ids()
+        if unknown:
+            raise HTTPException(404, f"Unknown document_id: {', '.join(sorted(unknown))}")
+
+    chunks, grounded = retrieve.retrieve(req.message, req.top_k, req.document_ids)
+
+    def refusal_stream():
+        yield _sse("citations", {"citations": [], "grounded": False})
+        yield _sse("token", {"text": prompts.REFUSAL_MESSAGE})
+        yield _sse("done", {"usage": {"input_tokens": 0, "output_tokens": 0},
+                            "answer": prompts.REFUSAL_MESSAGE,
+                            "budget": _budget().model_dump()})
+
+    if not grounded:
+        return StreamingResponse(refusal_stream(), media_type="text/event-stream")
+
+    citations = [
+        Citation(
+            marker=i,
+            document_id=c["metadata"]["document_id"],
+            filename=c["metadata"].get("filename", ""),
+            page=c["metadata"].get("page"),
+            chunk_id=c["chunk_id"],
+            snippet=c["text"][:SNIPPET_CHARS].strip() +
+                    ("..." if len(c["text"]) > SNIPPET_CHARS else ""),
+            score=c["score"],
+        )
+        for i, c in enumerate(chunks, start=1)
+    ]
+
+    user_content = prompts.format_context_block(chunks) + "\n\n" + req.message
+    history = llm.trim_history([m.model_dump() for m in req.history])
+
+    prompt_text = prompts.SYSTEM_PROMPT + "".join(m["content"] for m in history) + user_content
+    allowed, _estimate = usage.preflight_ok(prompt_text)
+
+    def event_stream():
+        yield _sse("citations",
+                   {"citations": [c.model_dump() for c in citations], "grounded": True})
+
+        if not allowed and not config.STUB_MODE:
+            # Local budget wall. Distinct from an upstream 429 because waiting
+            # will not fix it — nothing resets until 00:00 UTC.
+            yield _sse("error", {
+                "code": 429,
+                "detail": (f"Daily budget reached ({config.DAILY_TOKEN_BUDGET:,} tokens). "
+                           "Resets 00:00 UTC."),
+                "retry_after": None,
+            })
+            return
+
+        collected, usage_out = [], {}
+        try:
+            for piece in llm.stream_answer(prompts.SYSTEM_PROMPT, history,
+                                           user_content, usage_out):
+                collected.append(piece)
+                yield _sse("token", {"text": piece})
+        except RateLimitError as exc:
+            retry_after = None
+            if getattr(exc, "response", None) is not None:
+                retry_after = exc.response.headers.get("retry-after")
+            yield _sse("error", {"code": 429, "detail": "Provider rate limit reached.",
+                                 "retry_after": retry_after})
+            return
+        except APIConnectionError:
+            yield _sse("error", {"code": 503, "detail": "Provider unreachable",
+                                 "retry_after": None})
+            return
+
+        if not config.STUB_MODE and usage_out:
+            usage.record("/chat/stream", usage_out.get("input_tokens", 0),
+                         usage_out.get("output_tokens", 0), usage_out.get("groq_remaining"))
+
+        # Tokens went out raw, because normalising mid-stream would mean holding
+        # text back and losing the point of streaming. The cleaned answer rides
+        # along in `done`, and the client swaps it in once the stream ends.
+        yield _sse("done", {
+            "usage": {"input_tokens": usage_out.get("input_tokens", 0),
+                      "output_tokens": usage_out.get("output_tokens", 0)},
+            "answer": prompts.normalize_citations("".join(collected),
+                                                  max_marker=len(citations)),
+            "budget": _budget().model_dump(),
+        })
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

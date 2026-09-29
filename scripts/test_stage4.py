@@ -37,7 +37,9 @@ def check(ok: bool, label: str, detail: str = "") -> None:
         passed += 1
     else:
         failed += 1
-    print(f"  {'PASS' if ok else 'FAIL'}  {label}" + (f"   {detail}" if detail else ""))
+    # detail explains a FAILURE. Printing it next to PASS produced lines like
+    # "PASS  chunks contain the answer   retrieval sent the wrong chunks".
+    print(f"  {'PASS' if ok else 'FAIL'}  {label}" + (f"   {detail}" if detail and not ok else ""))
 
 
 print(f"\nStage 4 verification — budget before: {usage.today_total():,} tokens used\n")
