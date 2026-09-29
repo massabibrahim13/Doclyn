@@ -17,13 +17,56 @@ import time
 import httpx
 import streamlit as st
 
+# ── Configuration, before anything else ──────────────────────────────────────
+# Streamlit Community Cloud supplies configuration through st.secrets, but
+# backend.config reads os.environ at IMPORT time. So secrets have to land in the
+# environment before any backend module is imported — hence this sitting above
+# every other import rather than in a tidy function further down.
+try:
+    for _key, _value in st.secrets.items():
+        if isinstance(_value, str):
+            os.environ.setdefault(_key, _value)
+except Exception:
+    pass   # no secrets file locally, which is fine
+
+# Streamlit Community Cloud can only run a Streamlit app, so on that host the
+# API runs inside this same process on loopback rather than as its own service.
+# The separation still holds — it is the same ASGI app, reached over HTTP, and
+# this file still contains no business logic.
+EMBEDDED_API = os.getenv("DOCLYN_EMBEDDED_API", "0") == "1"
+
+@st.cache_resource(show_spinner="Starting Doclyn…")
+def _start_embedded_api() -> str:
+    """Run the FastAPI app in a background thread and wait for it to answer.
+
+    cache_resource means this happens once per process, not on every rerun —
+    Streamlit re-executes this whole file on every interaction, and starting a
+    second server on the same port would fail on the first click.
+    """
+    import threading
+
+    import uvicorn
+
+    from backend.main import app as api_app
+
+    server = uvicorn.Server(uvicorn.Config(
+        api_app, host="127.0.0.1", port=8000, log_level="warning"))
+    threading.Thread(target=server.run, daemon=True).start()
+
+    for _ in range(90):
+        try:
+            if httpx.get("http://127.0.0.1:8000/health", timeout=2).status_code == 200:
+                break
+        except httpx.HTTPError:
+            pass
+        time.sleep(1)
+    return "http://127.0.0.1:8000"
+
+
 def _api_url() -> str:
-    """Streamlit Community Cloud supplies secrets via st.secrets; everywhere
-    else it is an environment variable. Try both, fall back to localhost."""
-    try:
-        return st.secrets["DOCLYN_API"]
-    except Exception:
-        return os.getenv("DOCLYN_API", "http://localhost:8000")
+    if EMBEDDED_API:
+        return _start_embedded_api()
+    return os.getenv("DOCLYN_API", "http://localhost:8000")
 
 
 API = _api_url()
